@@ -826,7 +826,6 @@ if (!defined('CIVICRM_WPCLI_LOADED')) {
          * Implementation of command 'upgrade'
          */
         private function upgrade() {
-
             # todo: use wp-cli to download tarfile.
             # todo: if tarfile is not specified, see if the code already exists and use that instead.
             if (!$this->getOption('tarfile', false) and !$this->getOption('zipfile', false))
@@ -851,17 +850,23 @@ if (!defined('CIVICRM_WPCLI_LOADED')) {
             # pull out the lines we need using a regex and run them - yes, it's pretty silly ..
             # don't try this at home, kids.
 
+
             $settings = file_get_contents($settings_path);
             $settings = str_replace("\r", '', $settings);
             $settings = explode("\n", $settings);
 
-            if ($civicrm_root_code = reset(preg_grep('/^\s*\$civicrm_root\s*=.*$/', $settings))) {
+            if (defined('CIVICRM_ROOT')){
+		$civicrm_root = CIVICRM_ROOT;
+            } elseif ($civicrm_root_code = reset(preg_grep('/^\s*\$civicrm_root\s*=.*$/', $settings))) {
                 eval($civicrm_root_code);
             } else {
                 return WP_CLI::error('Unable to read $civicrm_root from civicrm.settings.php');
             }
 
-            if ($civicrm_dsn_code = reset(preg_grep('/^\s*define.*CIVICRM_DSN.*$/', $settings))) {
+            # If the DSN is set then use that, rather than playing with fire in the regex below
+            if (defined('CIVICRM_DSN')) {
+		define('CIVICRM_OLD_DSN', CIVICRM_DSN);
+            } elseif ($civicrm_dsn_code = reset(preg_grep('/^\s*define.*CIVICRM_DSN.*$/', $settings))) {
                 $civicrm_dsn_code = str_replace('CIVICRM_DSN', 'CIVICRM_OLD_DSN', $civicrm_dsn_code);
                 eval($civicrm_dsn_code);
             } else {
@@ -888,6 +893,10 @@ if (!defined('CIVICRM_WPCLI_LOADED')) {
             $backup_dir = $this->getOption('backup-dir', $wp_root . '../backup');
             $backup_dir = rtrim($backup_dir, '/');
 
+            if(!is_writeable($backup_dir))
+                return WP_CLI::error('The backup dir is not writeable: '.$backup_dir);
+
+
             WP_CLI::line("\nThe upgrade process involves - ");
             WP_CLI::line(sprintf("1. Backing up current CiviCRM code as => %s", "$backup_dir/plugins/$date/$backup_file"));
             WP_CLI::line(sprintf("2. Backing up database as => %s", "$backup_dir/plugins/$date/$backup_file.sql"));
@@ -899,7 +908,7 @@ if (!defined('CIVICRM_WPCLI_LOADED')) {
             # begin upgrade
 
             $backup_dir .= '/plugins/' . $date;
-            if (!mkdir($backup_dir, 777, true))
+            if (!mkdir($backup_dir, 0777, true))
                 return WP_CLI::error('Failed creating directory: ' . $backup_dir);
 
             $backup_target = $backup_dir . '/' . $backup_file;
@@ -1189,9 +1198,12 @@ if (!defined('CIVICRM_WPCLI_LOADED')) {
          * @return bool
          */
         private function unzip($destinationPath, $option='zipfile') {
-
             if ($zipfile = $this->getOption($option, false)) {
                 WP_CLI::line('Extracting zip archive ...');
+                if (!is_readable($zipfile)) {
+			WP_CLI::error("Zip file does not exist: ".$zipfile);
+			return false;
+		}
                 WP_CLI::launch("unzip -q " . $zipfile . " -d " . $destinationPath);
                 return true;
             } else {
